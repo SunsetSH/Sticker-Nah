@@ -1,0 +1,147 @@
+use super::ffmpeg::cmd;
+use serde::Serialize;
+use serde_json::Value;
+use std::path::Path;
+
+#[derive(Serialize, Clone, Debug)]
+pub struct MediaInfo {
+    pub kind: String, // "image" | "anim" | "video"
+    pub width: u32,
+    pub height: u32,
+    pub duration: f64, // сек; 0 для статики
+    pub fps: f64,
+    pub size_bytes: u64,
+    pub vcodec: String,
+    pub format_name: String,
+    pub has_alpha: bool,
+    pub has_audio: bool,
+    /// true, если WebView2 воспроизведёт файл напрямую (без прокси)
+    pub browser_playable: bool,
+}
+
+fn parse_rate(s: &str) -> f64 {
+    let mut it = s.split('/');
+    let num: f64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(0.0);
+    let den: f64 = it.next().and_then(|v| v.parse().ok()).unwrap_or(1.0);
+    if den > 0.0 && num > 0.0 {
+        num / den
+    } else {
+        0.0
+    }
+}
+
+const ALPHA_PIX_FMTS: &[&str] = &[
+    "rgba", "bgra", "argb", "abgr", "ya8", "ya16le", "ya16be", "yuva420p", "yuva422p",
+    "yuva444p", "gbrap", "rgba64le", "rgba64be",
+];
+
+const IMAGE_FORMATS: &[&str] = &[
+    "image2", "png_pipe", "jpeg_pipe", "webp_pipe", "bmp_pipe", "tiff_pipe",
+];
+
+pub fn probe(path: &Path) -> Result<MediaInfo, String> {
+    let size_bytes = std::fs::metadata(path)
+        .map_err(|e| format!("Файл недоступен: {e}"))?
+        .len();
+
+    let out = cmd("ffprobe")
+        .args([
+            "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
+        ])
+        .arg(path)
+        .output()
+        .map_err(|e| format!("Не удалось запустить ffprobe: {e}"))?;
+    if !out.status.success() {
+        return Err(format!(
+            "Файл не распознан: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
+    let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
+
+    let format_name = v["format"]["format_name"].as_str().unwrap_or("").to_string();
+    let fmt_duration: f64 = v["format"]["duration"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.0);
+
+    let empty = vec![];
+    let streams = v["streams"].as_array().unwrap_or(&empty);
+    let vstream = streams
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .ok_or("Видеопоток не найден")?;
+    let has_audio = streams.iter().any(|s| s["codec_type"] == "audio");
+
+    let width = vstream["width"].as_u64().unwrap_or(0) as u32;
+    let height = vstream["height"].as_u64().unwrap_or(0) as u32;
+    let vcodec = vstream["codec_name"].as_str().unwrap_or("").to_string();
+    let pix_fmt = vstream["pix_fmt"].as_str().unwrap_or("");
+    let nb_frames: u64 = vstream["nb_frames"]
+        .as_str()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0);
+    let mut fps = parse_rate(vstream["avg_frame_rate"].as_str().unwrap_or("0/1"));
+    if fps <= 0.0 {
+        fps = parse_rate(vstream["r_frame_rate"].as_str().unwrap_or("0/1"));
+    }
+
+    let is_image_fmt = IMAGE_FORMATS.iter().any(|f| format_name.contains(f));
+    let kind = if is_image_fmt && nb_frames <= 1 {
+        "image"
+    } else if format_name == "gif" {
+        if fmt_duration > 0.09 || nb_frames > 1 {
+            "anim"
+        } else {
+            "image"
+        }
+    } else if format_name.contains("apng") || is_image_fmt {
+        "anim"
+    } else {
+        "video"
+    };
+
+    let duration = if kind == "image" { 0.0 } else { fmt_duration };
+    let has_alpha = ALPHA_PIX_FMTS.contains(&pix_fmt);
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let browser_playable = match ext.as_str() {
+        "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" => true,
+        "mp4" | "m4v" => vcodec == "h264",
+        "webm" => matches!(vcodec.as_str(), "vp8" | "vp9" | "av1"),
+        _ => false,
+    };
+
+    Ok(MediaInfo {
+        kind: kind.to_string(),
+        width,
+        height,
+        duration,
+        fps,
+        size_bytes,
+        vcodec,
+        format_name,
+        has_alpha,
+        has_audio,
+        browser_playable,
+    })
+}
+
+/// Длительность готового файла (проверка лимита 3 с).
+pub fn out_duration(path: &Path) -> Result<f64, String> {
+    let out = cmd("ffprobe")
+        .args([
+            "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| "Не удалось определить длительность".to_string())
+}

@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sticker Nah</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <header id="toolbar">
+    <button id="btn-add" class="btn primary">+ Файлы</button>
+    <button id="btn-paste" class="btn" title="Ctrl+V">Вставить из буфера</button>
+    <button id="btn-convert-all" class="btn accent">Конвертировать всё</button>
+    <div class="spacer"></div>
+    <div id="outdir-box">
+      <span class="muted">Вывод:</span>
+      <button id="btn-outdir" class="btn slim" title="Выбрать папку вывода">рядом с исходником</button>
+      <button id="btn-outdir-reset" class="btn slim icon hidden" title="Сбросить">✕</button>
+    </div>
+    <button id="btn-clear" class="btn slim">Очистить</button>
+  </header>
+
+  <main id="rows">
+    <div id="empty-hint">
+      <div class="big">Перетащите файлы сюда</div>
+      <div>или нажмите «+ Файлы», или вставьте из буфера (Ctrl+V)</div>
+      <div class="muted small">Фото · GIF · видео → WebM VP9 · 512×512 · ≤ 256 КБ · ≤ 3 с</div>
+    </div>
+  </main>
+
+  <template id="row-template">
+    <section class="row">
+      <div class="col col-preview">
+        <div class="media-box"></div>
+        <div class="fname" title=""></div>
+        <div class="fmeta muted small"></div>
+      </div>
+      <div class="col col-params">
+        <div class="trim-block">
+          <div class="trim-labels small">
+            <span>Начало: <b class="t-start">0.00</b> с</span>
+            <span>Длина: <b class="t-len">3.00</b> с</span>
+            <span>Конец: <b class="t-end">3.00</b> с</span>
+          </div>
+          <div class="trim">
+            <div class="trim-fill"></div>
+            <input type="range" class="r-start" min="0" step="0.01" />
+            <input type="range" class="r-end" min="0" step="0.01" />
+          </div>
+        </div>
+        <div class="static-note muted small hidden">Статичное изображение — обрезка длительности не применяется</div>
+        <div class="param-grid">
+          <label>Масштаб
+            <select class="p-scale">
+              <option value="stretch" selected>Растянуть</option>
+              <option value="cover">Увеличить и обрезать</option>
+            </select>
+          </label>
+          <label>Размер
+            <span class="size-pair">
+              <input type="number" class="p-w" min="64" max="512" step="2" value="512" />
+              ×
+              <input type="number" class="p-h" min="64" max="512" step="2" value="512" />
+            </span>
+          </label>
+          <label>Формат
+            <select class="p-format">
+              <option value="vp9" selected>WebM (VP9)</option>
+            </select>
+          </label>
+        </div>
+      </div>
+      <div class="col col-out">
+        <div class="status-line">
+          <span class="badge idle">Ожидает</span>
+          <span class="sizes small"></span>
+        </div>
+        <div class="progress hidden"><div class="bar"></div><span class="ptext small"></span></div>
+        <div class="out-media hidden"></div>
+        <div class="out-actions">
+          <button class="btn slim b-convert">Конвертировать</button>
+          <button class="btn slim b-cancel hidden">Отмена</button>
+          <button class="btn slim b-folder hidden">Папка</button>
+          <button class="btn slim icon b-remove" title="Убрать из списка">✕</button>
+        </div>
+        <div class="err small hidden"></div>
+      </div>
+    </section>
+  </template>
+
+  <script src="main.js" defer></script>
+</body>
+</html>
