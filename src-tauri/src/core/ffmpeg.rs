@@ -3,29 +3,24 @@ use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
 
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Ищет ffmpeg/ffprobe: рядом с exe (портативная раскладка), в ресурсах, в dev-папке, затем PATH.
+/// Ищет ffmpeg/ffprobe в платформенных каталогах (см. platform::tool_dirs),
+/// затем в PATH.
 pub fn tool_path(name: &str) -> PathBuf {
-    let exe = format!("{name}.exe");
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(cur) = std::env::current_exe() {
-        if let Some(dir) = cur.parent() {
-            candidates.push(dir.join("bin").join(&exe));
-            candidates.push(dir.join("bin").join("win").join(&exe));
-            candidates.push(dir.join(&exe));
-        }
-    }
-    candidates.push(
-        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("bin")
-            .join("win")
-            .join(&exe),
-    );
-    for c in candidates {
+    let file = super::platform::tool_file(name);
+    // внешние бинарники (рядом с exe / dev-папка) имеют приоритет —
+    // это позволяет подменить встроенную версию
+    for dir in super::platform::tool_dirs() {
+        let c = dir.join(&file);
         if c.exists() {
             return c;
         }
+    }
+    #[cfg(windows)]
+    if let Some(p) = super::platform::extracted_tool(name) {
+        return p;
     }
     PathBuf::from(name)
 }
@@ -66,7 +61,10 @@ pub fn run_ffmpeg(
         .map_err(|e| format!("Не удалось запустить ffmpeg: {e}"))?;
     register_pid(child.id());
 
-    let stderr = child.stderr.take().unwrap();
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or("ffmpeg: поток stderr недоступен")?;
     let err_reader = std::thread::spawn(move || {
         let mut tail: VecDeque<String> = VecDeque::new();
         for line in BufReader::new(stderr).lines().map_while(Result::ok) {
@@ -78,7 +76,10 @@ pub fn run_ffmpeg(
         tail.into_iter().collect::<Vec<_>>().join("\n")
     });
 
-    let stdout = child.stdout.take().unwrap();
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or("ffmpeg: поток stdout недоступен")?;
     for line in BufReader::new(stdout).lines().map_while(Result::ok) {
         let us = line
             .strip_prefix("out_time_us=")
@@ -92,12 +93,17 @@ pub fn run_ffmpeg(
         }
     }
 
-    let status = child
-        .wait()
-        .map_err(|e| format!("ffmpeg wait: {e}"))?;
+    let status = child.wait().map_err(|e| format!("ffmpeg wait: {e}"))?;
     let err_tail = err_reader.join().unwrap_or_default();
     if !status.success() {
-        let tail: String = err_tail.chars().rev().take(1500).collect::<String>().chars().rev().collect();
+        let tail: String = err_tail
+            .chars()
+            .rev()
+            .take(1500)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
         return Err(if tail.is_empty() {
             format!("ffmpeg завершился с кодом {:?}", status.code())
         } else {

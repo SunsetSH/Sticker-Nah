@@ -31,12 +31,38 @@ fn parse_rate(s: &str) -> f64 {
 }
 
 const ALPHA_PIX_FMTS: &[&str] = &[
-    "rgba", "bgra", "argb", "abgr", "ya8", "ya16le", "ya16be", "yuva420p", "yuva422p",
-    "yuva444p", "gbrap", "rgba64le", "rgba64be",
+    "rgba",
+    "bgra",
+    "argb",
+    "abgr",
+    "ya8",
+    "ya16le",
+    "ya16be",
+    "yuva420p",
+    "yuva422p",
+    "yuva444p",
+    "yuva420p10le",
+    "yuva420p12le",
+    "yuva422p10le",
+    "yuva422p12le",
+    "yuva444p10le",
+    "yuva444p12le",
+    "yuva444p16le",
+    "gbrap",
+    "gbrap10le",
+    "gbrap12le",
+    "gbrap16le",
+    "rgba64le",
+    "rgba64be",
 ];
 
 const IMAGE_FORMATS: &[&str] = &[
-    "image2", "png_pipe", "jpeg_pipe", "webp_pipe", "bmp_pipe", "tiff_pipe",
+    "image2",
+    "png_pipe",
+    "jpeg_pipe",
+    "webp_pipe",
+    "bmp_pipe",
+    "tiff_pipe",
 ];
 
 pub fn probe(path: &Path) -> Result<MediaInfo, String> {
@@ -46,7 +72,12 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
 
     let out = cmd("ffprobe")
         .args([
-            "-v", "error", "-print_format", "json", "-show_format", "-show_streams",
+            "-v",
+            "error",
+            "-print_format",
+            "json",
+            "-show_format",
+            "-show_streams",
         ])
         .arg(path)
         .output()
@@ -59,7 +90,10 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
     }
     let v: Value = serde_json::from_slice(&out.stdout).map_err(|e| e.to_string())?;
 
-    let format_name = v["format"]["format_name"].as_str().unwrap_or("").to_string();
+    let format_name = v["format"]["format_name"]
+        .as_str()
+        .unwrap_or("")
+        .to_string();
     let fmt_duration: f64 = v["format"]["duration"]
         .as_str()
         .and_then(|s| s.parse().ok())
@@ -87,7 +121,7 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
     }
 
     let is_image_fmt = IMAGE_FORMATS.iter().any(|f| format_name.contains(f));
-    let kind = if is_image_fmt && nb_frames <= 1 {
+    let mut kind = if is_image_fmt && nb_frames <= 1 {
         "image"
     } else if format_name == "gif" {
         if fmt_duration > 0.09 || nb_frames > 1 {
@@ -95,14 +129,28 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         } else {
             "image"
         }
-    } else if format_name.contains("apng") || is_image_fmt {
+    } else if format_name == "webp_anim" || format_name.contains("apng") || is_image_fmt {
         "anim"
     } else {
         "video"
     };
 
-    let duration = if kind == "image" { 0.0 } else { fmt_duration };
-    let has_alpha = ALPHA_PIX_FMTS.contains(&pix_fmt);
+    // Контейнеры без длительности (например webp_anim): считаем кадры сами,
+    // иначе обрезка по умолчанию выродится в 0.05 с.
+    let mut duration = if kind == "image" { 0.0 } else { fmt_duration };
+    if kind != "image" && duration <= 0.0 {
+        let packets = count_packets(path).unwrap_or(0);
+        if packets <= 1 {
+            kind = "image";
+        } else {
+            let f = if fps > 0.0 { fps } else { 10.0 };
+            duration = packets as f64 / f;
+        }
+    }
+
+    // Прозрачный VP9/VP8 в webm ffprobe показывает как yuv420p + тег alpha_mode=1
+    let alpha_mode_tag = vstream["tags"]["alpha_mode"].as_str() == Some("1");
+    let has_alpha = ALPHA_PIX_FMTS.contains(&pix_fmt) || alpha_mode_tag;
 
     let ext = path
         .extension()
@@ -131,11 +179,39 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
     })
 }
 
+/// Число видеопакетов — используется, когда контейнер не сообщает длительность.
+fn count_packets(path: &Path) -> Result<u64, String> {
+    let out = cmd("ffprobe")
+        .args([
+            "-v",
+            "error",
+            "-count_packets",
+            "-select_streams",
+            "v:0",
+            "-show_entries",
+            "stream=nb_read_packets",
+            "-of",
+            "csv=p=0",
+        ])
+        .arg(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    String::from_utf8_lossy(&out.stdout)
+        .trim()
+        .parse()
+        .map_err(|_| "count_packets: нет данных".to_string())
+}
+
 /// Длительность готового файла (проверка лимита 3 с).
 pub fn out_duration(path: &Path) -> Result<f64, String> {
     let out = cmd("ffprobe")
         .args([
-            "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0",
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
         ])
         .arg(path)
         .output()

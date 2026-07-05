@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <title>Sticker Nah</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
@@ -47,6 +47,9 @@
             <input type="range" class="r-start" min="0" step="0.01" />
             <input type="range" class="r-end" min="0" step="0.01" />
           </div>
+          <label class="speed-toggle small" title="Участок любой длины будет ускорен или замедлен ровно до 3 секунд">
+            <input type="checkbox" class="p-speed" /> Скорость: уместить участок в 3 с
+          </label>
         </div>
         <div class="static-note muted small hidden">Статичное изображение — обрезка длительности не применяется</div>
         <div class="param-grid">
@@ -81,12 +84,15 @@
           <button class="btn slim b-convert">Конвертировать</button>
           <button class="btn slim b-cancel hidden">Отмена</button>
           <button class="btn slim b-folder hidden">Папка</button>
+          <button class="btn slim b-copy hidden" title="Скопировать файл в буфер обмена">Копировать</button>
           <button class="btn slim icon b-remove" title="Убрать из списка">✕</button>
         </div>
         <div class="err small hidden"></div>
       </div>
     </section>
   </template>
+
+  <div id="toast" class="hidden"></div>
 
   <script src="main.js" defer></script>
 </body>

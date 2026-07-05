@@ -1,5 +1,6 @@
 pub mod convert;
 pub mod ffmpeg;
+pub mod platform;
 pub mod probe;
 
 use std::path::PathBuf;

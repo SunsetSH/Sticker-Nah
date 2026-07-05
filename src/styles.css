@@ -22,6 +22,7 @@ body {
   overflow: hidden;
 }
 .hidden { display: none !important; }
+.android-hidden { display: none !important; }
 .muted { color: var(--muted); }
 .small { font-size: 12px; }
 
@@ -92,7 +93,10 @@ body {
   justify-content: center;
   overflow: hidden;
 }
-.media-box video, .media-box img { max-width: 100%; max-height: 100%; }
+/* transform: translateZ(0) переводит видео на отдельный композитный слой —
+   иначе WebView2 использует hardware-overlay для декода и теряет кадр при
+   прокрутке #rows (нативный скролл не синхронизирован с overlay-surface) */
+.media-box video, .media-box img { max-width: 100%; max-height: 100%; transform: translateZ(0); }
 .media-box .placeholder { color: var(--muted); font-size: 12px; padding: 8px; text-align: center; }
 .fname {
   margin-top: 6px;
@@ -133,12 +137,16 @@ body {
 }
 .trim-fill {
   position: absolute;
-  top: 10px;
-  height: 6px;
-  border-radius: 3px;
+  top: 6px;
+  height: 14px;
+  border-radius: 7px;
   background: var(--accent);
-  opacity: 0.55;
+  opacity: 0.45;
+  pointer-events: auto;
+  cursor: grab;
+  touch-action: none;
 }
+.trim-fill:active { cursor: grabbing; opacity: 0.6; }
 .trim::before {
   content: "";
   position: absolute;
@@ -148,6 +156,17 @@ body {
   border-radius: 3px;
   background: var(--panel2);
 }
+.speed-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+}
+.speed-toggle input { accent-color: var(--accent); }
+
 .param-grid {
   display: flex;
   gap: 16px;
@@ -203,6 +222,79 @@ select, input[type="number"] {
   text-shadow: 0 1px 2px #000a;
 }
 .out-media { margin-top: 8px; }
-.out-media video { width: 100%; max-height: 190px; border-radius: 8px; background: #0d0f12; }
+.out-media video { width: 100%; max-height: 190px; border-radius: 8px; background: #0d0f12; transform: translateZ(0); }
 .out-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .err { color: var(--err); margin-top: 6px; word-break: break-word; max-height: 80px; overflow-y: auto; }
+
+/* ---------- мобильная вёрстка (Android / узкое окно) ---------- */
+@media (max-width: 700px) {
+  body {
+    font-size: 15px;
+    /* страховка от edge-to-edge: не залезать под строку состояния и жест-бар */
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+  #toolbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 8px 10px;
+  }
+  #toolbar .spacer { display: none; }
+  .btn { padding: 10px 14px; font-size: 14px; }
+  .btn.slim { padding: 8px 12px; font-size: 13px; }
+  #outdir-box {
+    width: 100%;
+    max-width: none;
+    order: 9;
+  }
+  #btn-outdir { flex: 1; max-width: none; }
+
+  #rows { padding: 8px; }
+  #empty-hint .big { font-size: 19px; }
+
+  /* строка файла: одна колонка — превью, параметры, результат */
+  .row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+    padding: 10px;
+  }
+  .media-box { max-width: 320px; margin: 0 auto; }
+  .fname { text-align: center; }
+  .fmeta { text-align: center; }
+
+  /* ползунки крупнее под палец */
+  .trim { height: 34px; }
+  .trim::before { top: 14px; }
+  .trim-fill { top: 8px; height: 18px; border-radius: 9px; }
+  .trim input[type="range"]::-webkit-slider-runnable-track { height: 34px; }
+  .trim input[type="range"]::-webkit-slider-thumb {
+    width: 20px;
+    height: 30px;
+    margin-top: 2px;
+  }
+
+  .param-grid { gap: 10px; }
+  select, input[type="number"] { padding: 8px 10px; font-size: 14px; }
+
+  .out-media video { max-height: 240px; }
+  .out-actions .btn { flex: 1; text-align: center; }
+  .out-actions .btn.icon { flex: 0; }
+}
+
+/* ---------- toast ---------- */
+#toast {
+  position: fixed;
+  left: 50%;
+  bottom: 24px;
+  transform: translateX(-50%);
+  max-width: 70%;
+  background: var(--panel2);
+  border: 1px solid var(--err);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 13px;
+  box-shadow: 0 4px 16px #000a;
+  z-index: 100;
+}
+#toast.ok { border-color: var(--ok); }

@@ -7,6 +7,9 @@ const MAX_KB = 256;
 const MAX_DUR = 3.0;
 const MEDIA_EXT = ["png", "jpg", "jpeg", "webp", "bmp", "gif", "apng", "mp4", "m4v", "mov", "mkv", "webm", "avi"];
 
+// на Android нет буфера файлов и проводника — соответствующие кнопки скрываются
+const IS_ANDROID = /android/i.test(navigator.userAgent);
+
 const rowsEl = document.getElementById("rows");
 const emptyHint = document.getElementById("empty-hint");
 const tpl = document.getElementById("row-template");
@@ -35,6 +38,16 @@ function baseName(p) {
 function extOf(p) {
   const m = baseName(p).match(/\.([a-z0-9]+)$/i);
   return m ? m[1].toLowerCase() : "";
+}
+
+let toastTimer = null;
+function toast(msg, ok = false) {
+  const t = document.getElementById("toast");
+  t.textContent = String(msg);
+  t.classList.toggle("ok", ok);
+  t.classList.remove("hidden");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.add("hidden"), ok ? 2000 : 4000);
 }
 
 /* ---------------- настройки ---------------- */
@@ -70,7 +83,7 @@ async function addFiles(paths) {
       id, path,
       name: baseName(path),
       info: null,
-      params: { start: 0, end: MAX_DUR, w: 512, h: 512, scaleMode: "stretch", format: "vp9" },
+      params: { start: 0, end: MAX_DUR, w: 512, h: 512, scaleMode: "stretch", format: "vp9", speed: false },
       status: "idle",
       out: null,
       el: null,
@@ -110,11 +123,20 @@ function buildRow(row) {
   q(row, ".media-box").innerHTML = `<div class="placeholder">Читаю файл…</div>`;
 
   q(row, ".p-scale").addEventListener("change", (e) => (row.params.scaleMode = e.target.value));
+  q(row, ".p-format").addEventListener("change", (e) => (row.params.format = e.target.value));
   q(row, ".p-w").addEventListener("change", (e) => (row.params.w = clampSize(e.target)));
   q(row, ".p-h").addEventListener("change", (e) => (row.params.h = clampSize(e.target)));
   q(row, ".b-convert").addEventListener("click", () => enqueue([row]));
   q(row, ".b-cancel").addEventListener("click", () => cancelRow(row));
-  q(row, ".b-folder").addEventListener("click", () => row.out && invoke("reveal", { path: row.out.path }));
+  q(row, ".b-folder").addEventListener("click", () =>
+    row.out && invoke("reveal", { path: row.out.path }).catch(toast)
+  );
+  q(row, ".b-copy").addEventListener("click", () =>
+    row.out &&
+    invoke("clipboard_copy_file", { path: row.out.path })
+      .then(() => toast("Файл скопирован в буфер обмена", true))
+      .catch(toast)
+  );
   q(row, ".b-remove").addEventListener("click", () => removeRow(row));
 
   rowsEl.appendChild(el);
@@ -168,7 +190,7 @@ async function setupPreview(row) {
     }
   }
   box.innerHTML = "";
-  if (extOf(row.path) === "gif" && i.browser_playable) {
+  if (["gif", "webp"].includes(extOf(row.path)) && i.browser_playable) {
     const img = document.createElement("img");
     img.src = src;
     box.appendChild(img);
@@ -177,7 +199,7 @@ async function setupPreview(row) {
     v.controls = true;
     v.muted = true;
     v.loop = true;
-    v.preload = "metadata";
+    v.preload = "auto";
     v.src = src;
     box.appendChild(v);
   }
@@ -202,27 +224,65 @@ function setupTrim(row) {
   const apply = (moved) => {
     let s = parseFloat(rs.value);
     let e = parseFloat(re.value);
+    // при включённой «Скорости» участок любой длины ретаймится в 3 с
+    const span = row.params.speed ? dur : MAX_DUR;
     if (e - s < 0.1) {
       if (moved === "start") s = Math.max(0, e - 0.1);
       else e = Math.min(dur, s + 0.1);
     }
-    if (e - s > MAX_DUR) {
-      if (moved === "start") e = s + MAX_DUR;
-      else s = e - MAX_DUR;
+    if (e - s > span) {
+      if (moved === "start") e = s + span;
+      else s = e - span;
     }
     rs.value = s;
     re.value = e;
     row.params.start = s;
     row.params.end = e;
+    const len = e - s;
     q(row, ".t-start").textContent = s.toFixed(2);
     q(row, ".t-end").textContent = e.toFixed(2);
-    q(row, ".t-len").textContent = (e - s).toFixed(2);
+    q(row, ".t-len").textContent =
+      row.params.speed && Math.abs(len - MAX_DUR) > 0.01
+        ? `${len.toFixed(2)}→3.00 (×${(len / MAX_DUR).toFixed(2)})`
+        : len.toFixed(2);
     const fill = q(row, ".trim-fill");
     fill.style.left = `${(s / dur) * 100}%`;
-    fill.style.width = `${((e - s) / dur) * 100}%`;
+    fill.style.width = `${(len / dur) * 100}%`;
   };
+
+  q(row, ".p-speed").addEventListener("change", (e) => {
+    row.params.speed = e.target.checked;
+    apply("end"); // пересчёт ограничений: при выключении участок ужмётся до 3 с
+  });
   rs.addEventListener("input", () => apply("start"));
   re.addEventListener("input", () => apply("end"));
+
+  // перетаскивание всего окна обрезки за среднюю часть между ползунками
+  const fill = q(row, ".trim-fill");
+  fill.addEventListener("pointerdown", (ev) => {
+    ev.preventDefault();
+    const rect = q(row, ".trim").getBoundingClientRect();
+    const s0 = parseFloat(rs.value);
+    const len = parseFloat(re.value) - s0;
+    const x0 = ev.clientX;
+    fill.setPointerCapture(ev.pointerId);
+    const onMove = (m) => {
+      const ds = ((m.clientX - x0) / rect.width) * dur;
+      const s = Math.min(Math.max(0, s0 + ds), dur - len);
+      rs.value = s;
+      re.value = s + len;
+      apply("move");
+    };
+    const onUp = () => {
+      fill.removeEventListener("pointermove", onMove);
+      fill.removeEventListener("pointerup", onUp);
+      fill.removeEventListener("pointercancel", onUp);
+    };
+    fill.addEventListener("pointermove", onMove);
+    fill.addEventListener("pointerup", onUp);
+    fill.addEventListener("pointercancel", onUp);
+  });
+
   apply("end");
 }
 
@@ -257,6 +317,10 @@ function updateSizes(row) {
 }
 
 function showResult(row) {
+  if (IS_ANDROID) {
+    q(row, ".b-folder").classList.add("android-hidden");
+    q(row, ".b-copy").classList.add("android-hidden");
+  }
   const box = q(row, ".out-media");
   box.classList.remove("hidden");
   box.innerHTML = "";
@@ -267,6 +331,7 @@ function showResult(row) {
   v.src = convertFileSrc(row.out.path) + `?v=${Date.now()}`;
   box.appendChild(v);
   q(row, ".b-folder").classList.remove("hidden");
+  q(row, ".b-copy").classList.remove("hidden");
   q(row, ".b-convert").textContent = "Повторить";
 }
 
@@ -313,6 +378,8 @@ async function runConvert(row) {
         width: p.w,
         height: p.h,
         scale_mode: p.scaleMode,
+        speed: p.speed,
+        format: p.format,
         fps_limit: 30,
         input_fps: row.info.fps,
         has_alpha: row.info.has_alpha,
@@ -329,6 +396,7 @@ async function runConvert(row) {
     }
     updateSizes(row);
     showResult(row);
+    if (IS_ANDROID) saveToGallery(row);
   } catch (e) {
     const msg = String(e);
     if (msg.includes("Отменено")) {
@@ -337,6 +405,19 @@ async function runConvert(row) {
       setStatus(row, "error", "Ошибка");
       showErr(row, msg);
     }
+  }
+}
+
+/// Android: выбор папки вывода недоступен, поэтому готовый файл всегда
+/// автоматически копируется в общедоступную галерею (Movies/Sticker-Nah).
+async function saveToGallery(row) {
+  if (!row.out) return;
+  try {
+    const filename = baseName(row.out.path);
+    await invoke("android_save_to_gallery", { path: row.out.path, filename });
+    toast("Сохранено в галерею: Sticker-Nah", true);
+  } catch (e) {
+    toast(`Не удалось сохранить в галерею: ${e}`);
   }
 }
 
@@ -362,11 +443,22 @@ listen("convert-progress", (ev) => {
 /* ---------------- панель инструментов ---------------- */
 
 document.getElementById("btn-add").addEventListener("click", async () => {
-  const sel = await dialog.open({
-    multiple: true,
-    filters: [{ name: "Медиафайлы", extensions: MEDIA_EXT }],
-  });
-  if (sel) addFiles(Array.isArray(sel) ? sel : [sel]);
+  try {
+    if (IS_ANDROID) {
+      // SAF-пикер + копирование во временный файл целиком на стороне Rust —
+      // это единственный способ получить путь, который умеет открыть ffmpeg
+      const paths = await invoke("android_pick_files");
+      if (paths && paths.length) addFiles(paths);
+      return;
+    }
+    const sel = await dialog.open({
+      multiple: true,
+      filters: [{ name: "Медиафайлы", extensions: MEDIA_EXT }],
+    });
+    if (sel) addFiles(Array.isArray(sel) ? sel : [sel]);
+  } catch (e) {
+    toast(e);
+  }
 });
 
 async function pasteFromClipboard() {
@@ -374,11 +466,7 @@ async function pasteFromClipboard() {
     const paths = await invoke("clipboard_paste");
     addFiles(paths);
   } catch (e) {
-    // тихо игнорируем пустой буфер, но покажем в заголовке кнопки
-    const b = document.getElementById("btn-paste");
-    const t = b.textContent;
-    b.textContent = String(e);
-    setTimeout(() => (b.textContent = t), 2000);
+    toast(e);
   }
 }
 document.getElementById("btn-paste").addEventListener("click", pasteFromClipboard);
@@ -391,8 +479,12 @@ document.getElementById("btn-convert-all").addEventListener("click", () => {
 });
 
 document.getElementById("btn-outdir").addEventListener("click", async () => {
-  const sel = await dialog.open({ directory: true });
-  if (sel) setOutDir(sel);
+  try {
+    const sel = await dialog.open({ directory: true });
+    if (sel) setOutDir(sel);
+  } catch (e) {
+    toast(e);
+  }
 });
 document.getElementById("btn-outdir-reset").addEventListener("click", () => setOutDir(null));
 
@@ -408,5 +500,14 @@ listen("tauri://drag-drop", (ev) => {
   rowsEl.classList.remove("dragging");
   if (ev.payload && ev.payload.paths) addFiles(ev.payload.paths);
 });
+
+if (IS_ANDROID) {
+  document.getElementById("btn-paste").classList.add("android-hidden");
+  document.getElementById("outdir-box").classList.add("android-hidden");
+  emptyHint.innerHTML = `
+    <div class="big">Нажмите «+ Файлы»</div>
+    <div>чтобы добавить фото, GIF или видео</div>
+    <div class="muted small">Фото · GIF · видео → WebM VP9 · 512×512 · ≤ 256 КБ · ≤ 3 с</div>`;
+}
 
 loadSettings();

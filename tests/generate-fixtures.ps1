@@ -9,5 +9,6 @@ New-Item -ItemType Directory -Force $d | Out-Null
 & $ff -y -v error -f lavfi -i "testsrc2=size=720x1280:rate=25:duration=5" -f lavfi -i "sine=frequency=440:duration=5" -c:v libx264 -pix_fmt yuv420p -c:a aac -shortest "$d\vertical_audio.mp4"
 & $ff -y -v error -f lavfi -i "testsrc2=size=480x270:rate=15:duration=4" "$d\anim.gif"
 & $ff -y -v error -f lavfi -i "testsrc2=size=800x600:duration=0.04:rate=25" -frames:v 1 "$d\photo.png"
+& $ff -y -v error -f lavfi -i "testsrc2=size=320x240:rate=10:duration=2" -c:v libwebp_anim -loop 0 "$d\anim.webp"
 
 Get-ChildItem $d | Select-Object Name, @{n='KB';e={[math]::Round($_.Length/1KB)}}
