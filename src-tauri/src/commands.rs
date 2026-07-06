@@ -220,8 +220,41 @@ pub fn settings_save(app: AppHandle, data: String) -> Result<(), String> {
     std::fs::write(settings_path(&app), data).map_err(|e| e.to_string())
 }
 
+/// Имя файла от ContentProvider/IPC — недоверенное: берётся только последний
+/// компонент пути, служебные символы заменяются, длина ограничивается.
+#[cfg(target_os = "android")]
+fn sanitize_name(raw: &str) -> String {
+    let last = raw.rsplit(['/', '\\']).next().unwrap_or("");
+    let mut s: String = last
+        .chars()
+        .map(|c| {
+            if c.is_control() || matches!(c, ':' | '*' | '?' | '"' | '<' | '>' | '|') {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
+    s = s.trim_start_matches('.').to_string();
+    if s.is_empty() {
+        return "import".into();
+    }
+    if s.chars().count() > 120 {
+        // хвост важнее головы — там расширение
+        s = s
+            .chars()
+            .rev()
+            .take(120)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+    }
+    s
+}
+
 /// Android: системный выбор файлов (SAF) отдаёт content://-URI, которые ffmpeg
-/// не может открыть напрямую. Читаем содержимое через android_fs и копируем во
+/// не может открыть напрямую. Копируем содержимое через android_fs во
 /// временный файл — дальше ядро работает с обычным путём как на Windows.
 #[cfg(target_os = "android")]
 #[tauri::command]
@@ -236,13 +269,19 @@ pub async fn android_pick_files(app: AppHandle) -> Result<Vec<String>, String> {
 
     let mut paths = Vec::with_capacity(uris.len());
     for uri in uris {
-        let name = api
-            .get_name(&uri)
+        let name = sanitize_name(
+            &api.get_name(&uri)
+                .await
+                .unwrap_or_else(|_| "import".to_string()),
+        );
+        // потоково, а не через Vec<u8>: крупное видео не должно исчерпать память
+        let mut src = api
+            .open_file_readable(&uri)
             .await
-            .unwrap_or_else(|_| "import".to_string());
-        let bytes = api.read(&uri).await.map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?;
         let dest = temp_dir().join(format!("import_{}_{name}", unique_id()));
-        std::fs::write(&dest, &bytes).map_err(|e| e.to_string())?;
+        let mut dst = std::fs::File::create(&dest).map_err(|e| e.to_string())?;
+        std::io::copy(&mut src, &mut dst).map_err(|e| e.to_string())?;
         paths.push(dest.to_string_lossy().into_owned());
     }
     Ok(paths)
@@ -265,6 +304,7 @@ pub async fn android_save_to_gallery(
     filename: String,
 ) -> Result<(), String> {
     use tauri_plugin_android_fs::{AndroidFsExt, PublicVideoDir};
+    let filename = sanitize_name(&filename);
     let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
     let api = app.android_fs_async();
     let storage = api.public_storage();

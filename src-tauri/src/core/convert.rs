@@ -149,10 +149,40 @@ fn run_encoder(
     })
 }
 
-pub fn convert(p: &ConvertParams, prog: &mut Progress) -> Result<ConvertResult, String> {
+/// Серверная проверка параметров: IPC-границе нельзя доверять (XSS в WebView
+/// не должен получить произвольную запись файлов или исчерпание ресурсов).
+fn validate(p: &ConvertParams) -> Result<(), String> {
     if p.format != "vp9" {
         return Err(format!("Неподдерживаемый выходной формат: {}", p.format));
     }
+    if !matches!(p.scale_mode.as_str(), "stretch" | "cover") {
+        return Err("Неподдерживаемый режим масштабирования".into());
+    }
+    if !(16..=1024).contains(&p.width) || !(16..=1024).contains(&p.height) {
+        return Err("Недопустимый размер выхода".into());
+    }
+    for v in [p.trim_start, p.trim_end, p.fps_limit, p.input_fps] {
+        if !v.is_finite() || v < 0.0 || v > 100_000.0 {
+            return Err("Недопустимые параметры времени/частоты".into());
+        }
+    }
+    if p.trim_end < p.trim_start {
+        return Err("Конец обрезки раньше начала".into());
+    }
+    if !(16..=4096).contains(&p.max_kb) {
+        return Err("Недопустимый лимит размера".into());
+    }
+    // перезапись разрешена только для результата прежней конвертации
+    if let Some(op) = &p.out_path {
+        if !op.ends_with(".webm") {
+            return Err("Недопустимый путь выхода".into());
+        }
+    }
+    Ok(())
+}
+
+pub fn convert(p: &ConvertParams, prog: &mut Progress) -> Result<ConvertResult, String> {
+    validate(p)?;
     let out = pick_out_path(p)?;
     let part = part_path(&out);
     let res = if p.kind == "image" {
@@ -215,6 +245,8 @@ fn convert_image(
             "1".into(),
             "-vf".into(),
             vf.clone(),
+            "-aspect".into(),
+            format!("{}:{}", p.width, p.height),
             "-c:v".into(),
             "libvpx-vp9".into(),
             "-crf".into(),
@@ -276,6 +308,9 @@ fn encode_args(
     a.extend(["-i".into(), p.input.clone()]);
     a.extend(["-map".into(), "0:v:0".into()]);
     a.extend(["-vf".into(), vf.to_string()]);
+    // scale компенсирует растяжение через SAR и плееры показали бы исходные
+    // пропорции; DAR=w:h принуждает SAR к 1:1 — показ равен кодированному кадру
+    a.extend(["-aspect".into(), format!("{}:{}", p.width, p.height)]);
     a.extend([
         "-c:v".into(),
         "libvpx-vp9".into(),
@@ -497,7 +532,13 @@ pub fn make_proxy(input: &str, register_pid: impl FnOnce(u32)) -> Result<String,
         let _ = std::fs::remove_file(&part);
         return Err(e);
     }
-    std::fs::rename(&part, &out).map_err(|e| format!("Кэш предпросмотра: {e}"))?;
+    if let Err(e) = std::fs::rename(&part, &out) {
+        // параллельный make_proxy того же входа мог опередить — его кэш валиден
+        let _ = std::fs::remove_file(&part);
+        if !(out.exists() && file_size(&out) > 0) {
+            return Err(format!("Кэш предпросмотра: {e}"));
+        }
+    }
     Ok(out.to_string_lossy().into_owned())
 }
 

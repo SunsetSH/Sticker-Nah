@@ -26,7 +26,11 @@ fn cleanup_old_temp() {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // android-fs нужен только на Android — на десктопе не тащим зависимость
+    #[cfg(target_os = "android")]
+    let builder = builder.plugin(tauri_plugin_android_fs::init());
+    builder
         .setup(|_app| {
             // Android: std::env::temp_dir() указывает на недоступный /data/local/tmp —
             // перенаправляем во внутренний кэш приложения
@@ -42,7 +46,6 @@ pub fn run() {
             Ok(())
         })
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_android_fs::init())
         .manage(commands::JobState::default())
         .invoke_handler(tauri::generate_handler![
             commands::probe_file,

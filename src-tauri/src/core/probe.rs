@@ -107,8 +107,11 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         .ok_or("Видеопоток не найден")?;
     let has_audio = streams.iter().any(|s| s["codec_type"] == "audio");
 
-    let width = vstream["width"].as_u64().unwrap_or(0) as u32;
-    let height = vstream["height"].as_u64().unwrap_or(0) as u32;
+    let width = vstream["width"].as_u64().unwrap_or(0).min(1 << 16) as u32;
+    let height = vstream["height"].as_u64().unwrap_or(0).min(1 << 16) as u32;
+    if width == 0 || height == 0 {
+        return Err("Не удалось определить размеры кадра".into());
+    }
     let vcodec = vstream["codec_name"].as_str().unwrap_or("").to_string();
     let pix_fmt = vstream["pix_fmt"].as_str().unwrap_or("");
     let nb_frames: u64 = vstream["nb_frames"]
@@ -159,8 +162,9 @@ pub fn probe(path: &Path) -> Result<MediaInfo, String> {
         .to_ascii_lowercase();
     let browser_playable = match ext.as_str() {
         "png" | "jpg" | "jpeg" | "webp" | "bmp" | "gif" => true,
+        // AV1 поддержан WebView не везде (особенно Android) — идёт через прокси
         "mp4" | "m4v" => vcodec == "h264",
-        "webm" => matches!(vcodec.as_str(), "vp8" | "vp9" | "av1"),
+        "webm" => matches!(vcodec.as_str(), "vp8" | "vp9"),
         _ => false,
     };
 
@@ -216,6 +220,12 @@ pub fn out_duration(path: &Path) -> Result<f64, String> {
         .arg(path)
         .output()
         .map_err(|e| e.to_string())?;
+    if !out.status.success() {
+        return Err(format!(
+            "ffprobe: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
     String::from_utf8_lossy(&out.stdout)
         .trim()
         .parse()

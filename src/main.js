@@ -151,6 +151,8 @@ function clampSize(input) {
 
 function removeRow(row) {
   if (row.status === "working") cancelRow(row);
+  if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+  if (row.outUrl) URL.revokeObjectURL(row.outUrl);
   row.el.remove();
   rows.delete(row.id);
   if (rows.size === 0) emptyHint.classList.remove("hidden");
@@ -167,6 +169,44 @@ function renderMeta(row) {
 
 /* ---------------- предпросмотр входа ---------------- */
 
+/// Видео в <video> загружается целиком через Blob: потоковая отдача
+/// asset-протокола (Range-запросы) нестабильна в WebView2 и Android WebView —
+/// зависания со спиннером, обрыв при прокрутке, «то играет, то нет».
+async function blobSrc(path) {
+  const resp = await fetch(convertFileSrc(path));
+  if (!resp.ok) throw new Error(`Не удалось прочитать файл (${resp.status})`);
+  return URL.createObjectURL(await resp.blob());
+}
+
+// крупный исходник целиком в память не тянем — для него делается прокси
+const BLOB_LIMIT = 64 * 1024 * 1024;
+
+/// <video> с бейджем «текущая / общая, с»: нативные контролы WebView2
+/// прячут таймер на узком элементе.
+function videoWithBadge(src) {
+  const wrap = document.createElement("div");
+  wrap.className = "video-wrap";
+  const v = document.createElement("video");
+  v.controls = true;
+  v.muted = true;
+  v.loop = true;
+  v.playsInline = true;
+  v.preload = "auto";
+  v.src = src;
+  const b = document.createElement("div");
+  b.className = "time-badge hidden";
+  const upd = () => {
+    // для одно-кадрового стикера из фото таймер бессмыслен
+    if (!isFinite(v.duration) || v.duration < 0.1) return;
+    b.textContent = `${v.currentTime.toFixed(1)} / ${v.duration.toFixed(1)} с`;
+    b.classList.remove("hidden");
+  };
+  v.addEventListener("timeupdate", upd);
+  v.addEventListener("loadedmetadata", upd);
+  wrap.append(v, b);
+  return wrap;
+}
+
 async function setupPreview(row) {
   const box = q(row, ".media-box");
   const i = row.info;
@@ -177,32 +217,27 @@ async function setupPreview(row) {
     box.appendChild(img);
     return;
   }
-  let src;
-  if (i.browser_playable) {
-    src = convertFileSrc(row.path);
-  } else {
-    box.innerHTML = `<div class="placeholder">Готовлю предпросмотр…</div>`;
-    try {
-      src = convertFileSrc(await invoke("make_preview", { input: row.path }));
-    } catch (e) {
-      box.innerHTML = `<div class="placeholder">Предпросмотр недоступен</div>`;
-      return;
-    }
+  if (["gif", "webp"].includes(extOf(row.path)) && i.browser_playable) {
+    box.innerHTML = "";
+    const img = document.createElement("img");
+    img.src = convertFileSrc(row.path);
+    box.appendChild(img);
+    return;
+  }
+  box.innerHTML = `<div class="placeholder">Готовлю предпросмотр…</div>`;
+  try {
+    const path =
+      i.browser_playable && i.size_bytes <= BLOB_LIMIT
+        ? row.path
+        : await invoke("make_preview", { input: row.path });
+    if (row.previewUrl) URL.revokeObjectURL(row.previewUrl);
+    row.previewUrl = await blobSrc(path);
+  } catch (e) {
+    box.innerHTML = `<div class="placeholder">Предпросмотр недоступен</div>`;
+    return;
   }
   box.innerHTML = "";
-  if (["gif", "webp"].includes(extOf(row.path)) && i.browser_playable) {
-    const img = document.createElement("img");
-    img.src = src;
-    box.appendChild(img);
-  } else {
-    const v = document.createElement("video");
-    v.controls = true;
-    v.muted = true;
-    v.loop = true;
-    v.preload = "auto";
-    v.src = src;
-    box.appendChild(v);
-  }
+  box.appendChild(videoWithBadge(row.previewUrl));
 }
 
 /* ---------------- обрезка длительности ---------------- */
@@ -316,7 +351,7 @@ function updateSizes(row) {
   }
 }
 
-function showResult(row) {
+async function showResult(row) {
   if (IS_ANDROID) {
     q(row, ".b-folder").classList.add("android-hidden");
     q(row, ".b-copy").classList.add("android-hidden");
@@ -324,12 +359,16 @@ function showResult(row) {
   const box = q(row, ".out-media");
   box.classList.remove("hidden");
   box.innerHTML = "";
-  const v = document.createElement("video");
-  v.controls = true;
-  v.muted = true;
-  v.loop = true;
-  v.src = convertFileSrc(row.out.path) + `?v=${Date.now()}`;
-  box.appendChild(v);
+  let src;
+  try {
+    // выход ≤256 КБ — Blob вместо потоковой отдачи asset-протокола
+    if (row.outUrl) URL.revokeObjectURL(row.outUrl);
+    row.outUrl = await blobSrc(row.out.path);
+    src = row.outUrl;
+  } catch (e) {
+    src = convertFileSrc(row.out.path) + `?v=${Date.now()}`;
+  }
+  box.appendChild(videoWithBadge(src));
   q(row, ".b-folder").classList.remove("hidden");
   q(row, ".b-copy").classList.remove("hidden");
   q(row, ".b-convert").textContent = "Повторить";
@@ -396,7 +435,11 @@ async function runConvert(row) {
     }
     updateSizes(row);
     showResult(row);
-    if (IS_ANDROID) saveToGallery(row);
+    // невалидный результат (больше лимита) в галерею не публикуется
+    if (IS_ANDROID) {
+      if (row.out.fits) saveToGallery(row);
+      else toast("Больше 256 КБ — в галерею не сохранено. Уменьшите длительность");
+    }
   } catch (e) {
     const msg = String(e);
     if (msg.includes("Отменено")) {

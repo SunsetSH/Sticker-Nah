@@ -2,6 +2,8 @@
 # Minimal static ffmpeg/ffprobe build for Sticker Nah (run inside MSYS2 MINGW64).
 # Only: input demuxers/decoders for photo/gif/video, libvpx VP8/VP9 encoders,
 # webm muxer, 5 filters. No audio codecs, no network, no docs.
+# Требуется: pacman -S mingw-w64-x86_64-dav1d (программный AV1-декодер —
+# встроенный av1 в ffmpeg только hardware-обёртка и без hwaccel не работает).
 set -euo pipefail
 
 # master-снапшот: декодер webp_anim (анимированный WebP) ещё не попал в релизы
@@ -19,11 +21,11 @@ cd FFmpeg-master
 ./configure \
   --disable-everything --disable-autodetect --disable-network --disable-doc \
   --disable-avdevice --disable-debug --disable-ffplay \
-  --enable-gpl --enable-libvpx --enable-small \
+  --enable-gpl --enable-libvpx --enable-libdav1d --enable-small \
   --enable-zlib \
   --enable-protocol=file,pipe \
   --enable-demuxer=mov,matroska,gif,apng,avi,image2,image2pipe,image_png_pipe,image_jpeg_pipe,image_bmp_pipe,image_webp_pipe,webp_anim \
-  --enable-decoder=h264,hevc,mpeg4,mjpeg,vp8,vp9,av1,png,gif,webp,webp_anim,bmp,apng \
+  --enable-decoder=h264,hevc,mpeg4,mjpeg,vp8,vp9,libdav1d,png,gif,webp,webp_anim,bmp,apng \
   --enable-parser=h264,hevc,vp9,png,mjpeg,gif,av1 \
   --enable-encoder=libvpx_vp9,libvpx_vp8 \
   --enable-muxer=webm,null \

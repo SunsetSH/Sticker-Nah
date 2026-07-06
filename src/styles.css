@@ -97,6 +97,26 @@ body {
    иначе WebView2 использует hardware-overlay для декода и теряет кадр при
    прокрутке #rows (нативный скролл не синхронизирован с overlay-surface) */
 .media-box video, .media-box img { max-width: 100%; max-height: 100%; transform: translateZ(0); }
+.media-box .video-wrap {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.video-wrap { position: relative; }
+.time-badge {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  background: rgba(0, 0, 0, 0.65);
+  color: var(--text);
+  font-size: 11px;
+  line-height: 1.5;
+  padding: 1px 6px;
+  border-radius: 4px;
+  pointer-events: none;
+}
 .media-box .placeholder { color: var(--muted); font-size: 12px; padding: 8px; text-align: center; }
 .fname {
   margin-top: 6px;
@@ -221,8 +241,10 @@ select, input[type="number"] {
   font-size: 11px;
   text-shadow: 0 1px 2px #000a;
 }
-.out-media { margin-top: 8px; }
-.out-media video { width: 100%; max-height: 190px; border-radius: 8px; background: #0d0f12; transform: translateZ(0); }
+/* элемент по размеру видео (обычно квадрат), без чёрных полей на всю колонку */
+.out-media { margin-top: 8px; text-align: center; }
+.out-media .video-wrap { display: inline-block; max-width: 100%; line-height: 0; }
+.out-media video { max-width: 100%; max-height: 190px; border-radius: 8px; background: #0d0f12; transform: translateZ(0); }
 .out-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
 .err { color: var(--err); margin-top: 6px; word-break: break-word; max-height: 80px; overflow-y: auto; }
 
