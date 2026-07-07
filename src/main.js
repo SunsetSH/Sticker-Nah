@@ -128,18 +128,53 @@ function buildRow(row) {
   q(row, ".p-h").addEventListener("change", (e) => (row.params.h = clampSize(e.target)));
   q(row, ".b-convert").addEventListener("click", () => enqueue([row]));
   q(row, ".b-cancel").addEventListener("click", () => cancelRow(row));
-  q(row, ".b-folder").addEventListener("click", () =>
-    row.out && invoke("reveal", { path: row.out.path }).catch(toast)
-  );
-  q(row, ".b-copy").addEventListener("click", () =>
-    row.out &&
-    invoke("clipboard_copy_file", { path: row.out.path })
-      .then(() => toast("Файл скопирован в буфер обмена", true))
-      .catch(toast)
-  );
+  q(row, ".b-folder").addEventListener("click", () => {
+    if (IS_ANDROID) {
+      // файл лежит в галерее (Movies/Sticker-Nah) — открываем системным
+      // диалогом выбора приложения по content-URI
+      if (row.galleryUri) invoke("android_open_file", { uri: row.galleryUri }).catch(toast);
+      else toast("Файл не сохранён в галерею");
+      return;
+    }
+    if (row.out) invoke("reveal", { path: row.out.path }).catch(toast);
+  });
+  q(row, ".b-copy").addEventListener("click", () => {
+    if (IS_ANDROID) {
+      // «Поделиться» (ACTION_SEND): Telegram и галереи в списке получателей
+      if (row.galleryUri) invoke("android_share_file", { uri: row.galleryUri }).catch(toast);
+      else toast("Файл не сохранён в галерею");
+      return;
+    }
+    if (row.out)
+      invoke("clipboard_copy_file", { path: row.out.path })
+        .then(() => toast("Файл скопирован в буфер обмена", true))
+        .catch(toast);
+  });
   q(row, ".b-remove").addEventListener("click", () => removeRow(row));
 
+  if (IS_ANDROID) {
+    // «Папка» → «Открыть» (ACTION_VIEW), «Копировать» → иконка «Поделиться»
+    // (ACTION_SEND) — подписи статичны, видимость зависит от row.galleryUri
+    // и переключается через setGalleryButtonsVisible
+    const f = q(row, ".b-folder");
+    const c = q(row, ".b-copy");
+    f.textContent = "Открыть";
+    c.innerHTML =
+      `<svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">` +
+      `<path d="M18 16.08c-.76 0-1.44.3-1.96.77L8.91 12.7c.05-.23.09-.46.09-.7s-.04-.47-.09-.7l7.05-4.11c.54.5 1.25.81 2.04.81 1.66 0 3-1.34 3-3s-1.34-3-3-3-3 1.34-3 3c0 .24.04.47.09.7L8.04 9.81C7.5 9.31 6.79 9 6 9c-1.66 0-3 1.34-3 3s1.34 3 3 3c.79 0 1.5-.31 2.04-.81l7.12 4.16c-.05.21-.08.43-.08.65 0 1.61 1.31 2.92 2.92 2.92s2.92-1.31 2.92-2.92-1.31-2.92-2.92-2.92z"/></svg>`;
+    c.title = "Поделиться";
+    c.classList.add("icon");
+  }
+
   rowsEl.appendChild(el);
+}
+
+/// Android: единственное место, переключающее видимость «Открыть»/«Поделиться» —
+/// вызывается и из showResult (скрыть до подтверждённого сохранения), и из
+/// saveToGallery (показать после него), чтобы правило не расходилось по местам.
+function setGalleryButtonsVisible(row, visible) {
+  q(row, ".b-folder").classList.toggle("android-hidden", !visible);
+  q(row, ".b-copy").classList.toggle("android-hidden", !visible);
 }
 
 function clampSize(input) {
@@ -352,10 +387,7 @@ function updateSizes(row) {
 }
 
 async function showResult(row) {
-  if (IS_ANDROID) {
-    q(row, ".b-folder").classList.add("android-hidden");
-    q(row, ".b-copy").classList.add("android-hidden");
-  }
+  if (IS_ANDROID) setGalleryButtonsVisible(row, !!row.galleryUri);
   const box = q(row, ".out-media");
   box.classList.remove("hidden");
   box.innerHTML = "";
@@ -403,6 +435,11 @@ function pump() {
 
 async function runConvert(row) {
   setStatus(row, "working", "Кодирование…");
+  // предыдущий файл в галерее больше не соответствует row.out; URI сохраняем
+  // отдельно — saveToGallery удалит его после того, как запишет новый
+  // (write_new не перезаписывает одноимённый файл, а плодит дубли)
+  if (row.galleryUri) row.staleGalleryUri = row.galleryUri;
+  row.galleryUri = null;
   const p = row.params;
   try {
     const res = await invoke("convert", {
@@ -457,7 +494,10 @@ async function saveToGallery(row) {
   if (!row.out) return;
   try {
     const filename = baseName(row.out.path);
-    await invoke("android_save_to_gallery", { path: row.out.path, filename });
+    const old_uri = row.staleGalleryUri || null;
+    row.galleryUri = await invoke("android_save_to_gallery", { path: row.out.path, filename, old_uri });
+    row.staleGalleryUri = null;
+    setGalleryButtonsVisible(row, true);
     toast("Сохранено в галерею: Sticker-Nah", true);
   } catch (e) {
     toast(`Не удалось сохранить в галерею: ${e}`);

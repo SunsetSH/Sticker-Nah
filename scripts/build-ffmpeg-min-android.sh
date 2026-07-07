@@ -12,17 +12,20 @@ TC="$NDK/toolchains/llvm/prebuilt/windows-x86_64"
 CC="$TC/bin/aarch64-linux-android$API-clang.cmd"
 CXX="$TC/bin/aarch64-linux-android$API-clang++.cmd"
 SRC=/tmp/ffmpeg-android
+# все источники закреплены (коммит/тег + sha256) — сборка воспроизводима
+source "$(dirname "$0")/ffmpeg-version.sh"
 VPX_VER=1.15.2
+VPX_SHA256=26fcd3db88045dee380e581862a6ef106f49b74b6396ee95c2993a260b4636aa
+DAV1D_VER=1.5.3
+DAV1D_SHA256=cbe212b02faf8c6eed5b6d55ef8a6e363aaab83f15112e960701a9c3df813686
 
 mkdir -p "$SRC"
 cd "$SRC"
 
 # ---------- libvpx ----------
 if [ ! -f "$SRC/vpx/lib/libvpx.a" ]; then
-  if [ ! -d "libvpx-$VPX_VER" ]; then
-    curl -sL "https://github.com/webmproject/libvpx/archive/refs/tags/v$VPX_VER.tar.gz" -o libvpx.tar.gz
-    tar xf libvpx.tar.gz
-  fi
+  fetch_verified "https://github.com/webmproject/libvpx/archive/refs/tags/v$VPX_VER.tar.gz" \
+    "$VPX_SHA256" libvpx.tar.gz "libvpx-$VPX_VER"
   cd "libvpx-$VPX_VER"
   CC="$CC" CXX="$CXX" LD="$CC" AR="$TC/bin/llvm-ar.exe" \
   STRIP="$TC/bin/llvm-strip.exe" RANLIB="$TC/bin/llvm-ranlib.exe" \
@@ -39,10 +42,13 @@ fi
 # guard — по последнему создаваемому артефакту (иначе оборванный прогон
 # оставит libdav1d.a без dav1d.pc и блок будет ошибочно пропущен)
 if [ ! -f "$SRC/dav1d/lib/pkgconfig/dav1d.pc" ]; then
-  if [ ! -d "dav1d-src" ]; then
-    curl -sL "https://code.videolan.org/videolan/dav1d/-/archive/1.5.3/dav1d-1.5.3.tar.gz" -o dav1d.tar.gz
+  if [ ! -f "dav1d-src/.sticker-nah-verified" ]; then
+    rm -rf dav1d-src "dav1d-$DAV1D_VER"
+    curl -sL "https://code.videolan.org/videolan/dav1d/-/archive/$DAV1D_VER/dav1d-$DAV1D_VER.tar.gz" -o dav1d.tar.gz
+    echo "$DAV1D_SHA256 *dav1d.tar.gz" | sha256sum -c -
     tar xf dav1d.tar.gz
-    mv dav1d-1.5.3 dav1d-src
+    mv "dav1d-$DAV1D_VER" dav1d-src
+    touch dav1d-src/.sticker-nah-verified
   fi
   # meson — нативный windows-бинарь, пути в cross-файле нужны в windows-виде
   cat > "$SRC/android-cross.txt" <<EOF
@@ -84,13 +90,9 @@ EOF
 fi
 
 # ---------- ffmpeg ----------
-if [ ! -d "FFmpeg-master" ]; then
-  cp -r /tmp/ffmpeg-src/FFmpeg-master . 2>/dev/null || {
-    curl -sL "https://github.com/FFmpeg/FFmpeg/archive/refs/heads/master.tar.gz" -o ffmpeg-master.tar.gz
-    tar xf ffmpeg-master.tar.gz
-  }
-fi
-cd FFmpeg-master
+fetch_verified "https://github.com/FFmpeg/FFmpeg/archive/$FFMPEG_COMMIT.tar.gz" \
+  "$FFMPEG_SHA256" ffmpeg-src.tar.gz "FFmpeg-$FFMPEG_COMMIT"
+cd "FFmpeg-$FFMPEG_COMMIT"
 make distclean >/dev/null 2>&1 || true
 
 export PKG_CONFIG_PATH="$SRC/dav1d/lib/pkgconfig"

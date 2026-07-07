@@ -14,19 +14,22 @@ Windows + Android (Tauri 2 + Rust + FFmpeg). ТЗ и архитектура: [SP
   итеративное снижение битрейта, затем fps (30→24→20→15), до 8 попыток.
 - Предпросмотр входа и результата с таймлайном; размеры «вход → выход».
 - Параллельная очередь (ядер/2).
-- Windows: один exe-файл (ffmpeg/ffprobe встроены, распаковываются лениво).
+- Windows: один exe-файл (ffmpeg/ffprobe встроены, распаковываются лениво;
+  распакованная копия проверяется побайтово при каждом запуске).
 - Android: системный выбор файлов (SAF), результат сохраняется в галерею
-  (`Movies/Sticker-Nah`).
+  (`Movies/Sticker-Nah`) — кнопки «Открыть» и «Поделиться» ведут на сам файл.
 
 ## Сборка
 
 **Windows** — Rust (MSVC), Node.js, ffmpeg.exe + ffprobe.exe в `src-tauri/bin/win/`
-(собираются `scripts/build-ffmpeg-min-win.sh`).
+(собираются `scripts/build-ffmpeg-min-win.sh`, версия FFmpeg закреплена коммитом
++ sha256 в `scripts/ffmpeg-version.sh` — сборка воспроизводима).
 
 ```powershell
 npm install
 npm run dev                    # запуск в dev-режиме
-scripts\package-portable.ps1   # портативная папка release\StickerNah
+scripts\package-portable.ps1   # портативный release\Sticker Nah.exe
+scripts\sign.ps1               # подпись exe (самоподписанный сертификат, см. комментарий в скрипте)
 ```
 
 **Android** — JDK 21, Android SDK/NDK, ffmpeg для arm64 в `src-tauri/bin/android/`

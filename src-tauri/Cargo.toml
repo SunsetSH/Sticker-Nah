@@ -1,6 +1,6 @@
 [package]
 name = "sticker-nah"
-version = "0.9.0"
+version = "1.0.0"
 edition = "2021"
 description = "Конвертер медиа в стикеры WebM VP9 512x512 <=256KB"
 

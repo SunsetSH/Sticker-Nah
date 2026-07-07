@@ -6,17 +6,16 @@
 # встроенный av1 в ffmpeg только hardware-обёртка и без hwaccel не работает).
 set -euo pipefail
 
-# master-снапшот: декодер webp_anim (анимированный WebP) ещё не попал в релизы
+# master-снапшот: декодер webp_anim (анимированный WebP) ещё не попал в релизы.
+source "$(dirname "$0")/ffmpeg-version.sh"
 SRC=/tmp/ffmpeg-src
 OUT="$(cygpath -u "$1")" # куда положить готовые exe
 
 mkdir -p "$SRC"
 cd "$SRC"
-if [ ! -d "FFmpeg-master" ]; then
-  curl -sL "https://github.com/FFmpeg/FFmpeg/archive/refs/heads/master.tar.gz" -o ffmpeg-master.tar.gz
-  tar xf ffmpeg-master.tar.gz
-fi
-cd FFmpeg-master
+fetch_verified "https://github.com/FFmpeg/FFmpeg/archive/$FFMPEG_COMMIT.tar.gz" \
+  "$FFMPEG_SHA256" ffmpeg-src.tar.gz "FFmpeg-$FFMPEG_COMMIT"
+cd "FFmpeg-$FFMPEG_COMMIT"
 
 ./configure \
   --disable-everything --disable-autodetect --disable-network --disable-doc \

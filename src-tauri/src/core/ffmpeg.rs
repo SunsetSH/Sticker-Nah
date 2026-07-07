@@ -6,12 +6,22 @@ use std::process::{Command, Stdio};
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-/// Ищет ffmpeg/ffprobe в платформенных каталогах (см. platform::tool_dirs),
-/// затем в PATH.
+/// Путь к ffmpeg/ffprobe. Порядок источников:
+/// 1) явный каталог из STICKER_NAH_TOOLS (диагностика/разработка);
+/// 2) dev-сборка — локальные каталоги проекта;
+/// 3) release Windows — только встроенная проверенная копия (внешний файл
+///    рядом с exe больше не перехватывает запуск);
+/// 4) Android — nativeLibraryDir (файлы из подписанного APK);
+/// 5) PATH.
 pub fn tool_path(name: &str) -> PathBuf {
     let file = super::platform::tool_file(name);
-    // внешние бинарники (рядом с exe / dev-папка) имеют приоритет —
-    // это позволяет подменить встроенную версию
+    if let Some(dir) = std::env::var_os("STICKER_NAH_TOOLS") {
+        let c = PathBuf::from(dir).join(&file);
+        if c.exists() {
+            return c;
+        }
+    }
+    #[cfg(any(debug_assertions, not(windows)))]
     for dir in super::platform::tool_dirs() {
         let c = dir.join(&file);
         if c.exists() {
@@ -35,6 +45,7 @@ pub fn cmd_raw(program: &str) -> Command {
 }
 
 fn cmd_at(path: PathBuf) -> Command {
+    #[cfg_attr(not(windows), allow(unused_mut))]
     let mut c = Command::new(path);
     #[cfg(windows)]
     {

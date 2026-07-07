@@ -2,9 +2,10 @@ mod commands;
 mod core;
 
 /// Временные файлы (вставки из буфера, прокси-превью, хвосты pass-логов)
-/// старше 3 суток удаляются при старте.
+/// старше 3 суток и распакованные бинари прежних версий удаляются при старте.
 fn cleanup_old_temp() {
     std::thread::spawn(|| {
+        core::platform::cleanup_old_extracted();
         let ttl = std::time::Duration::from_secs(3 * 24 * 3600);
         let Ok(rd) = std::fs::read_dir(core::temp_dir()) else {
             return;
@@ -18,7 +19,12 @@ fn cleanup_old_temp() {
                 .map(|age| age > ttl)
                 .unwrap_or(false);
             if expired {
-                let _ = std::fs::remove_file(entry.path());
+                let p = entry.path();
+                if p.is_dir() {
+                    let _ = std::fs::remove_dir_all(&p);
+                } else {
+                    let _ = std::fs::remove_file(&p);
+                }
             }
         }
     });
@@ -59,6 +65,8 @@ pub fn run() {
             commands::settings_save,
             commands::android_pick_files,
             commands::android_save_to_gallery,
+            commands::android_open_file,
+            commands::android_share_file,
         ])
         .run(tauri::generate_context!())
         .expect("ошибка запуска Sticker Nah");

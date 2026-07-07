@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Sticker Nah",
-  "version": "0.9.0",
+  "version": "1.0.0",
   "identifier": "com.stickernah.desktop",
   "build": {
     "frontendDist": "../src"
@@ -29,6 +29,12 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"]
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/icon.ico"],
+    "publisher": "Alexander Kondratyev",
+    "windows": {
+      "certificateThumbprint": "3761C2D14E42A744131B4F53922C94AE2ED9B992",
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com"
+    }
   }
 }

@@ -122,7 +122,15 @@ pub async fn convert(
 pub fn cancel(state: State<'_, JobState>, id: String) {
     lock(&state.cancelled).insert(id.clone());
     if let Some(pid) = lock(&state.pids).get(&id).copied() {
-        crate::core::platform::kill_pid(pid);
+        #[cfg_attr(not(debug_assertions), allow(unused_variables))]
+        let killed = crate::core::platform::kill_pid(pid);
+        // неудача не критична: флаг отмены остановит задание между проходами;
+        // чаще всего это штатная гонка (процесс уже сам завершился) — не ошибка,
+        // поэтому лог только в debug-сборке, для диагностики реальных сбоев
+        #[cfg(debug_assertions)]
+        if !killed {
+            eprintln!("cancel: не удалось завершить pid {pid}");
+        }
     }
 }
 
@@ -293,25 +301,38 @@ pub async fn android_pick_files(_app: AppHandle) -> Result<Vec<String>, String> 
     Err("Доступно только на Android".into())
 }
 
+#[cfg(target_os = "android")]
+fn parse_file_uri(uri: &str) -> Result<tauri_plugin_android_fs::FileUri, String> {
+    serde_json::from_str(uri).map_err(|e| e.to_string())
+}
+
 /// Android: готовый стикер сохраняется в общедоступную галерею —
 /// Movies/Sticker-Nah/<имя>.webm — чтобы им можно было поделиться из Telegram
 /// и других приложений (выбор папки вывода на Android не поддерживается).
+/// Возвращает URI созданного файла — по нему кнопка «Открыть» показывает
+/// системный выбор приложения. `old_uri` — URI файла с прошлой попытки той же
+/// строки: write_new не перезаписывает одноимённый файл, а добавляет суффикс
+/// «(1)», поэтому старая версия удаляется отдельно, чтобы не копиться в галерее.
 #[cfg(target_os = "android")]
 #[tauri::command]
 pub async fn android_save_to_gallery(
     app: AppHandle,
     path: String,
     filename: String,
-) -> Result<(), String> {
+    old_uri: Option<String>,
+) -> Result<String, String> {
     use tauri_plugin_android_fs::{AndroidFsExt, PublicVideoDir};
     let filename = sanitize_name(&filename);
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let bytes = tauri::async_runtime::spawn_blocking(move || std::fs::read(&path))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
     let api = app.android_fs_async();
     let storage = api.public_storage();
     if !storage.check_permission().await.unwrap_or(false) {
         storage.request_permission().await.map_err(|e| e.to_string())?;
     }
-    storage
+    let uri = storage
         .write_new(
             None,
             PublicVideoDir::Movies,
@@ -321,7 +342,12 @@ pub async fn android_save_to_gallery(
         )
         .await
         .map_err(|e| e.to_string())?;
-    Ok(())
+    if let Some(old) = old_uri {
+        if let Ok(old) = parse_file_uri(&old) {
+            let _ = api.remove_file(&old).await;
+        }
+    }
+    serde_json::to_string(&uri).map_err(|e| e.to_string())
 }
 
 #[cfg(not(target_os = "android"))]
@@ -330,6 +356,47 @@ pub async fn android_save_to_gallery(
     _app: AppHandle,
     _path: String,
     _filename: String,
-) -> Result<(), String> {
+    _old_uri: Option<String>,
+) -> Result<String, String> {
+    Err("Доступно только на Android".into())
+}
+
+/// Android: открыть сохранённый в галерею файл выбранным приложением
+/// (ACTION_VIEW с системным диалогом выбора).
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn android_open_file(app: AppHandle, uri: String) -> Result<(), String> {
+    use tauri_plugin_android_fs::AndroidFsExt;
+    let uri = parse_file_uri(&uri)?;
+    app.android_fs_async()
+        .file_opener()
+        .open_file(&uri)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub async fn android_open_file(_app: AppHandle, _uri: String) -> Result<(), String> {
+    Err("Доступно только на Android".into())
+}
+
+/// Android: «Поделиться» (ACTION_SEND) — прямой путь стикера в Telegram;
+/// в отличие от ACTION_VIEW, среди получателей есть мессенджеры и галереи.
+#[cfg(target_os = "android")]
+#[tauri::command]
+pub async fn android_share_file(app: AppHandle, uri: String) -> Result<(), String> {
+    use tauri_plugin_android_fs::AndroidFsExt;
+    let uri = parse_file_uri(&uri)?;
+    app.android_fs_async()
+        .file_opener()
+        .share_file(&uri)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[cfg(not(target_os = "android"))]
+#[tauri::command]
+pub async fn android_share_file(_app: AppHandle, _uri: String) -> Result<(), String> {
     Err("Доступно только на Android".into())
 }

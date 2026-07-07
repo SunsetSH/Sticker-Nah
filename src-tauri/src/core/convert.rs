@@ -421,6 +421,11 @@ fn convert_video_inner(
     let mut bitrate = init_bitrate(out_dur);
     let mut attempts = 0u32;
     let mut duration_retry_done = false;
+    // статистика 1-го прохода (fpf-лог) зависит только от содержимого кадров —
+    // от участка (in_dur) и цепочки фильтров (fps/tempo/scale), но не от
+    // битрейта; пока они не меняются между попытками, лог остаётся валидным и
+    // проход 1 можно не перезапускать, экономя половину времени на retry
+    let mut need_pass1 = true;
 
     loop {
         if (prog.is_cancelled)() {
@@ -431,13 +436,16 @@ fn convert_video_inner(
         let tempo = out_dur / in_dur;
         let vf = vf_chain(p, Some(fps), tempo);
 
-        for pass_n in [1u32, 2] {
-            if (prog.is_cancelled)() {
-                return Err("Отменено".into());
-            }
-            let args = encode_args(p, in_dur, bitrate, &vf, pass_n, passlog, part);
-            run_encoder(&args, out_dur, prog, attempts, pass_n)?;
+        if need_pass1 {
+            let args = encode_args(p, in_dur, bitrate, &vf, 1, passlog, part);
+            run_encoder(&args, out_dur, prog, attempts, 1)?;
+            need_pass1 = false;
         }
+        if (prog.is_cancelled)() {
+            return Err("Отменено".into());
+        }
+        let args = encode_args(p, in_dur, bitrate, &vf, 2, passlog, part);
+        run_encoder(&args, out_dur, prog, attempts, 2)?;
 
         let size = file_size(part);
         if size <= max_bytes {
@@ -449,6 +457,7 @@ fn convert_video_inner(
                 if !p.speed {
                     out_dur = in_dur;
                 }
+                need_pass1 = true; // изменился участок — старая статистика не годится
                 continue;
             }
             return Ok(ConvertResult {
@@ -479,6 +488,7 @@ fn convert_video_inner(
         if bitrate < 150 && fps_idx + 1 < fps_ladder.len() {
             fps_idx += 1;
             bitrate = init_bitrate(out_dur);
+            need_pass1 = true; // изменился fps — изменилась и цепочка фильтров
         }
     }
 }

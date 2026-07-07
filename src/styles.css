@@ -56,6 +56,7 @@ body {
 .btn.accent:hover { background: rgba(62, 207, 110, 0.12); }
 .btn.slim { padding: 4px 10px; font-size: 12px; }
 .btn.icon { padding: 4px 8px; }
+.btn.icon svg { display: block; margin: 0 auto; }
 .btn:disabled { opacity: 0.45; cursor: default; }
 
 /* ---------- rows ---------- */
