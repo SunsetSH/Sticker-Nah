@@ -28,3 +28,6 @@ desktop.ini
 .claude/
 CLAUDE.md
 .claudeignore
+
+# Локальная документация (не для публикации)
+SPEC.md

@@ -1,7 +1,7 @@
 # Sticker Nah
 
 Конвертер медиафайлов в стикеры: **WebM VP9 · 512×512 · ≤ 256 КБ · ≤ 3 с · без звука**.
-Windows + Android (Tauri 2 + Rust + FFmpeg). ТЗ и архитектура: [SPEC.md](SPEC.md).
+Windows + Android (Tauri 2 + Rust + FFmpeg).
 
 ## Возможности
 
